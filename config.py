@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # ── Gemini ───────────────────────────────────────────────────────────────────
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 # Use gemini-2.0-flash (rename to gemini-2.5-flash once it reaches GA)
-GEMINI_MODEL: str = "gemini-2.5-flash"
+GEMINI_MODEL: str = "gemini-2.0-flash"
 LLM_TEMPERATURE: float = 0.70
 LLM_TOP_P: float = 0.92
 LLM_MAX_TOKENS: int = 8192
