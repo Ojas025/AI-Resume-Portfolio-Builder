@@ -5,7 +5,12 @@ All tuneable constants and environment-sourced settings live here.
 
 import os
 import logging
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - depends on local install state
+    def load_dotenv() -> bool:
+        return False
 
 load_dotenv()
 
@@ -19,8 +24,13 @@ logger = logging.getLogger(__name__)
 
 # ── Gemini ───────────────────────────────────────────────────────────────────
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-# Use gemini-2.0-flash (rename to gemini-2.5-flash once it reaches GA)
-GEMINI_MODEL: str = "gemini-2.0-flash"
+GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_FALLBACK_MODELS: list[str] = [
+    model.strip()
+    for model in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-2.5-flash-lite").split(",")
+    if model.strip() and model.strip() != GEMINI_MODEL
+]
+GEMINI_FALLBACK_MODEL: str = GEMINI_FALLBACK_MODELS[0] if GEMINI_FALLBACK_MODELS else ""
 LLM_TEMPERATURE: float = 0.70
 LLM_TOP_P: float = 0.92
 LLM_MAX_TOKENS: int = 8192

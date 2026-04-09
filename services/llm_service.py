@@ -15,14 +15,17 @@ import config
 logger = logging.getLogger(__name__)
 
 
-def _build_model() -> tuple[Optional[genai.GenerativeModel], Optional[str]]:
-    """
-    Configure and return a GenerativeModel instance.
+def _generation_config() -> genai.GenerationConfig:
+    """Build the shared generation config for all model attempts."""
+    return genai.GenerationConfig(
+        temperature=config.LLM_TEMPERATURE,
+        top_p=config.LLM_TOP_P,
+        max_output_tokens=config.LLM_MAX_TOKENS,
+    )
 
-    Returns
-    -------
-    (model, error_message) — exactly one of the two will be non-None.
-    """
+
+def _build_model(model_name: str) -> tuple[Optional[genai.GenerativeModel], Optional[str]]:
+    """Configure and return a GenerativeModel instance for *model_name*."""
     api_key = config.GEMINI_API_KEY
     if not api_key:
         return None, (
@@ -32,17 +35,13 @@ def _build_model() -> tuple[Optional[genai.GenerativeModel], Optional[str]]:
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(
-            model_name=config.GEMINI_MODEL,
-            generation_config=genai.GenerationConfig(
-                temperature=config.LLM_TEMPERATURE,
-                top_p=config.LLM_TOP_P,
-                max_output_tokens=config.LLM_MAX_TOKENS,
-            ),
+            model_name=model_name,
+            generation_config=_generation_config(),
         )
         return model, None
     except Exception as exc:
-        logger.exception("Failed to initialise Gemini model")
-        return None, f"Model initialisation failed: {exc}"
+        logger.exception("Failed to initialise Gemini model %s", model_name)
+        return None, f"Model initialisation failed for {model_name}: {exc}"
 
 
 def _strip_code_fences(text: str) -> str:
@@ -62,9 +61,49 @@ def _strip_code_fences(text: str) -> str:
     return text.strip()
 
 
+def _extract_text(response) -> str:
+    """
+    Extract text from a Gemini response.
+
+    `response.text` can itself raise when the SDK receives a blocked/empty
+    candidate, so fall back to walking the candidate content manually.
+    """
+    try:
+        text = response.text
+        if text:
+            return _strip_code_fences(text)
+    except Exception:
+        logger.debug("Falling back to manual response parsing", exc_info=True)
+
+    parts: list[str] = []
+    for candidate in getattr(response, "candidates", []) or []:
+        content = getattr(candidate, "content", None)
+        for part in getattr(content, "parts", []) or []:
+            value = getattr(part, "text", None)
+            if value:
+                parts.append(value)
+
+    text = "\n".join(parts).strip()
+    if not text:
+        raise ValueError("Gemini returned no text content")
+    return _strip_code_fences(text)
+
+
+def _candidate_models() -> list[str]:
+    """Return the ordered list of models to try."""
+    models = [config.GEMINI_MODEL, *getattr(config, "GEMINI_FALLBACK_MODELS", [])]
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for model in models:
+        if model and model not in seen:
+            ordered.append(model)
+            seen.add(model)
+    return ordered
+
+
 def get_llm_response(prompt: str) -> tuple[str, Optional[str]]:
     """
-    Send *prompt* to the configured Gemini model.
+    Send *prompt* to the configured Gemini model list.
 
     Parameters
     ----------
@@ -75,17 +114,25 @@ def get_llm_response(prompt: str) -> tuple[str, Optional[str]]:
     -------
     (text, error) — on success *error* is None; on failure *text* is empty.
     """
-    model, err = _build_model()
-    if err:
-        return "", err
+    errors: list[str] = []
 
-    try:
-        logger.info("Sending request to %s (len=%d chars)", config.GEMINI_MODEL, len(prompt))
-        response = model.generate_content(prompt)
-        text = _strip_code_fences(response.text)
-        logger.info("Received response (%d chars)", len(text))
-        return text, None
-    except Exception as exc:
-        logger.exception("LLM call failed")
-        return "", f"LLM request failed: {exc}"
+    for model_name in _candidate_models():
+        model, err = _build_model(model_name)
+        if err:
+            errors.append(err)
+            continue
 
+        try:
+            logger.info("Sending request to %s (len=%d chars)", model_name, len(prompt))
+            response = model.generate_content(prompt)
+            text = _extract_text(response)
+            logger.info("Received response from %s (%d chars)", model_name, len(text))
+            return text, None
+        except Exception as exc:
+            logger.exception("LLM call failed for %s", model_name)
+            errors.append(f"{model_name}: {exc}")
+
+    if not errors:
+        return "", "LLM request failed: no Gemini models configured"
+
+    return "", "LLM request failed. Attempts: " + " | ".join(errors)

@@ -62,8 +62,14 @@ def render_sidebar() -> None:
 
         st.markdown("---")
         st.markdown("### Model")
+        fallback_text = ", ".join(config.GEMINI_FALLBACK_MODELS) or "None"
         st.markdown(
-            f"<small style='color:#6b7280'>Using: <code>{config.GEMINI_MODEL}</code></small>",
+            (
+                "<small style='color:#6b7280'>"
+                f"Primary: <code>{config.GEMINI_MODEL}</code><br>"
+                f"Fallbacks: <code>{fallback_text}</code>"
+                "</small>"
+            ),
             unsafe_allow_html=True,
         )
 
